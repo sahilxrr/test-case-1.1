@@ -80,31 +80,71 @@ def tokenize(text: str) -> list[str]:
     return [t for t in tokens if t not in STOP_WORDS and len(t) > 1]
 
 
+def _finish_stem(word: str) -> str:
+    """Make a stem independent of the inflection it was cut from.
+
+    Without this, 'running' -> 'runn' never meets 'run', and 'escalated'
+    -> 'escalat' never meets 'escalate'.
+    """
+    # undo a doubled final consonant ('runn' -> 'run', 'resett' -> 'reset'),
+    # but keep 'll', 'ss', 'zz' ('bill', 'access')
+    if len(word) > 3 and word[-1] == word[-2] and word[-1] not in "aeioulsz":
+        word = word[:-1]
+    # drop a trailing 'e' so 'escalate' and 'escalat(ed/ion)' share one stem
+    if len(word) > 3 and word.endswith("e"):
+        word = word[:-1]
+    return word
+
+
 def stem(word: str) -> str:
-    """Lightweight suffix-stripping stemmer (no external libs)."""
+    """Lightweight suffix-stripping stemmer (no external libs).
+
+    Different inflections of one word should reduce to the same stem, so a
+    query like "refunded" can find a document that says "refund":
+
+    >>> stem("refund") == stem("refunded") == stem("refunds")
+    True
+    >>> stem("escalate") == stem("escalated") == stem("escalation")
+    True
+    >>> stem("delete") == stem("deleted") == stem("deleting") == stem("deletion")
+    True
+    >>> stem("key") == stem("keys")
+    True
+    >>> stem("reset") == stem("resetting")
+    True
+    >>> stem("setting") == stem("settings")
+    True
+
+    Words that merely look inflected are left alone:
+
+    >>> stem("access"), stem("status"), stem("speed")
+    ('access', 'status', 'speed')
+    """
     rules = [
         ("ational", "ate"), ("tional", "tion"), ("enci", "ence"),
         ("anci", "ance"), ("izer", "ize"), ("ising", "ise"),
         ("izing", "ize"), ("bles", "ble"), ("ness", ""), ("ment", ""),
-        ("ful", ""), ("less", ""), ("ously", ""), ("ings", "ing"),
+        ("ful", ""), ("less", ""), ("ously", ""), ("ings", ""),
         ("ers", "er"), ("ing", ""), ("ies", "y"), ("ied", "y"),
         ("tion", "te"), ("tions", "te"), ("edly", ""), ("ably", ""),
         ("ibly", ""), ("ations", "ate"), ("ators", "ate"),
         ("alism", "al"), ("alists", "al"), ("alize", "al"),
         ("alities", "al"), ("ality", "al"), ("fulness", "ful"),
         ("ousness", "ous"), ("iveness", "ive"), ("ication", "y"),
-        ("izations", "ize"), ("ization", "ize"),
+        ("izations", "ize"), ("ization", "ize"), ("ed", ""),
     ]
     for suffix, replacement in rules:
         if word.endswith(suffix) and len(word) - len(suffix) > 2:
-            return word[: len(word) - len(suffix)] + replacement
+            if suffix == "ed" and word.endswith("eed"):
+                continue  # 'speed', 'need' are not past tenses
+            return _finish_stem(word[: len(word) - len(suffix)] + replacement)
     if word.endswith("sses"):
         return word[:-2]
     if word.endswith("ies"):
         return word[:-3] + "y"
-    if len(word) > 4 and word.endswith("s") and not word.endswith("ss"):
-        return word[:-1]
-    return word
+    if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return _finish_stem(word[:-1])
+    return _finish_stem(word)
 
 
 def normalize_tokens(tokens: list[str]) -> list[str]:
